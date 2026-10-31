@@ -47,6 +47,7 @@ To see what is on the panel without looking at it, fetch `/dev/fb0` with `nc` an
 - **`V4L2_CID_ROTATION` is `0x08000000`:** a private Samsung control, taken from the hwcomposer disassembly.
 - **`reboot -f` always returns to BOOT:** it ignores the flag in PARAM. Recovery needs a reboot with the `recovery` argument, that is `bootmenu recovery`.
 - **Do not kill `notedisplayd`:** doing it live reboots the tablet. The cause was not investigated.
+- **Light sensor:** `raw_data` must be read with `enable` at 1 on the `light_sensor` input device. With it at 0 the values jump around. The first reading after enabling is stale.
 - **`oops=panic`:** any oops reboots the tablet. The log stays in `/proc/last_kmsg`, readable from Android.
 - **MFC firmware:** the driver requests it before `/init` runs, so `/init` loads it by hand from `/sys/class/firmware`.
 - **Android's `dd`:** it rejects `conv=fsync` and writes nothing.

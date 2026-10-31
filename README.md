@@ -54,7 +54,7 @@ A menu appears for 5 seconds at power-on, starting from the most recent choice:
 
 Volume moves the selection and Power confirms, or you can touch an entry.
 
-While the display is running, a touch anywhere or the Power key opens a panel with battery, fps and timings. The panel also sets brightness, rotation, the fps limit and the keepalive.
+While the display is running, a touch anywhere or the Power key opens a panel with battery, fps and timings. The panel also sets brightness, by hand or from the light sensor, rotation, the fps limit and the keepalive.
 
 ## Guides
 

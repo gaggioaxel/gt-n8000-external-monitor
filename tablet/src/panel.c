@@ -1,7 +1,8 @@
 /*
  * Pop-up panel: a touch or Power opens it, Volume changes brightness and opens it if closed.
  * It closes by itself after a few seconds or with a touch outside. It shows battery and
- * statistics, and sets brightness, rotation, the fps limit and the PC keepalive.
+ * statistics, and sets brightness, rotation, the fps limit and the PC keepalive. With Auto on,
+ * the light sensor drives the brightness until a manual change turns it off.
  *
  * The input thread does all the slow work (sysfs, text drawing) and publishes an image
  * already rotated like fb0; the presenter only has to copy it over the video.
@@ -29,6 +30,8 @@ _Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 #define TOUCH_NAME	"sec_touchscreen"
 #define KEYS_NAME	"gpio-keys"
 #define BL_PATH		"/sys/class/backlight/panel/brightness"
+#define LIGHT_NAME	"light_sensor"
+#define LIGHT_RAW	"/sys/class/sensors/light_sensor/raw_data"
 #define BAT_PATH	"/sys/class/power_supply/battery/"
 #define USB_ONLINE	"/sys/class/power_supply/usb/online"
 #define AC_ONLINE	"/sys/class/power_supply/ac/online"
@@ -36,6 +39,12 @@ _Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 #define BL_MAX		255
 #define BL_MIN		10		/* never zero: the panel would be needed to turn it back on */
 #define BL_STEP		13		/* 5% for each Volume press */
+#define LIGHT_EVERY	0.2		/* seconds between sensor readings: the driver's own period */
+#define LIGHT_SAMPLES	25		/* brightness follows the mean of the last 5 seconds */
+#define LIGHT_SETTLE	1.0		/* the first reading after enabling is stale */
+#define LIGHT_DEADBAND	3		/* ignores small changes, or the panel would keep hunting */
+#define FADE_EVERY	0.03		/* seconds between backlight steps during a fade */
+#define AUTO_FADE	2.0		/* Auto covers 63% of the distance in this many seconds */
 
 #define HIDE_AFTER	6.0		/* seconds without touches */
 #define PW		620
@@ -45,9 +54,11 @@ _Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 #define ROW_H		36
 #define BTN_H		52
 #define LABEL_W		150
+#define AUTO_W		100
 
 /* Top to bottom: Y values are relative to the panel */
 #define Y_BATTERY	8
+#define Y_AUTO		(Y_BATTERY + 6)
 #define Y_BRIGHT	(Y_BATTERY + ROW_H)
 #define Y_SLIDER	(Y_BRIGHT + ROW_H)
 #define SLIDER_H	44
@@ -63,7 +74,7 @@ _Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 #define C_BTN		0xff343a42u
 #define C_ACCENT	0xff2f7fe0u
 
-enum { G_ROT, G_FPS, G_KEEP };
+enum { G_ROT, G_FPS, G_KEEP, G_AUTO };
 
 struct button {
 	int group, value;
@@ -74,8 +85,17 @@ static const struct button buttons[] = {
 	{ G_ROT, 180, "Land" }, { G_ROT, 90, "Port" }, { G_ROT, 0, "Land 180" }, { G_ROT, 270, "Port 180" },
 	{ G_FPS, 30, "30" }, { G_FPS, 45, "45" }, { G_FPS, 60, "60" },
 	{ G_KEEP, 25, "25" }, { G_KEEP, 50, "50" }, { G_KEEP, 100, "100" }, { G_KEEP, 250, "250" },
+	{ G_AUTO, 1, "Auto" },
 };
 #define NBUTTONS	(int)(sizeof(buttons) / sizeof(buttons[0]))
+
+/* Sensor reading to backlight level, straight lines between the points */
+static const struct {
+	int raw, level;
+} light_curve[] = {
+	{ 0, BL_MIN }, { 15, 64 }, { 50, 100 }, { 200, 150 }, { 1000, 220 }, { 3000, BL_MAX },
+};
+#define NCURVE		(int)(sizeof(light_curve) / sizeof(light_curve[0]))
 
 static pthread_mutex_t plock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -96,7 +116,12 @@ static uint32_t images[2][PW * PH];
 static int next_image;
 static int fb_w, fb_h;
 static int abs_x_max, abs_y_max;
-static int brightness = 150;
+static int brightness = 150;		/* where the backlight is going */
+static int bl_level;			/* where it is now: see fade_tick() */
+static float bl_exact;			/* the same with its fraction, for the slow Auto fade */
+static int auto_brightness, light_raw;
+static int light_samples[LIGHT_SAMPLES], light_count, light_next;
+static double next_light, last_fade;
 static int bat_percent = -1, bat_temp;
 static char bat_status[24];
 static double last_touch, last_battery, last_power;
@@ -124,6 +149,19 @@ static int read_int(const char *path, int fallback)
 	return atoi(buf);
 }
 
+static void write_int(const char *path, int value)
+{
+	char buf[16];
+	int fd = open(path, O_WRONLY);
+	int n = snprintf(buf, sizeof(buf), "%d\n", value);
+
+	if (fd < 0)
+		return;
+	if (write(fd, buf, n) < 0)
+		perror(path);
+	close(fd);
+}
+
 static void read_battery(void)
 {
 	char buf[24];
@@ -145,9 +183,6 @@ static void read_battery(void)
 
 static void set_brightness(int value)
 {
-	char buf[16];
-	int fd, n;
-
 	if (value < BL_MIN)
 		value = BL_MIN;
 	if (value > BL_MAX)
@@ -155,13 +190,97 @@ static void set_brightness(int value)
 	if (value == brightness)
 		return;
 	brightness = value;
-	fd = open(BL_PATH, O_WRONLY);
-	if (fd < 0)
+}
+
+/* Every change is a fade: slow and exponential under Auto, a quick ease-out by hand */
+static void fade_tick(void)
+{
+	double t = now();
+	int delta = brightness - bl_level, level;
+
+	if (!delta || t - last_fade < FADE_EVERY)
 		return;
-	n = snprintf(buf, sizeof(buf), "%d\n", value);
-	if (write(fd, buf, n) < 0)
-		perror("panel: brightness");
-	close(fd);
+	last_fade = t;
+	if (auto_brightness) {
+		bl_exact += (brightness - bl_exact) * FADE_EVERY / AUTO_FADE;
+		level = bl_exact + 0.5f;
+	} else {
+		level = bl_level + (delta > 0 ? abs(delta) / 4 + 1 : -(abs(delta) / 4 + 1));
+		bl_exact = level;
+	}
+	if (level != bl_level) {
+		bl_level = level;
+		write_int(BL_PATH, level);
+	}
+}
+
+/* The sensor is off until asked for. Its input number depends on the probe order. */
+static void light_power(int on)
+{
+	for (int i = 0; i < 16; i++) {
+		char path[48], name[32] = "";
+		int fd, n;
+
+		snprintf(path, sizeof(path), "/sys/class/input/input%d/name", i);
+		fd = open(path, O_RDONLY);
+		if (fd < 0)
+			continue;
+		n = read(fd, name, sizeof(name) - 1);
+		close(fd);
+		if (n > 0 && !strncmp(name, LIGHT_NAME, strlen(LIGHT_NAME))) {
+			snprintf(path, sizeof(path), "/sys/class/input/input%d/enable", i);
+			write_int(path, on);
+			return;
+		}
+	}
+	fprintf(stderr, "panel: %s not found\n", LIGHT_NAME);
+}
+
+static void set_auto(int on)
+{
+	if (on == auto_brightness)
+		return;
+	auto_brightness = on;
+	light_count = light_next = 0;
+	light_raw = 0;
+	next_light = now() + LIGHT_SETTLE;
+	light_power(on);
+}
+
+static int light_level(float raw)
+{
+	for (int i = 1; i < NCURVE; i++) {
+		if (raw < light_curve[i].raw) {
+			int r0 = light_curve[i - 1].raw, l0 = light_curve[i - 1].level;
+
+			return l0 + (raw - r0) * (light_curve[i].level - l0) / (light_curve[i].raw - r0);
+		}
+	}
+	return BL_MAX;
+}
+
+/* Mean over several seconds: a passing shadow must not be seen as a change of brightness */
+static void light_tick(void)
+{
+	double t = now();
+	float sum = 0;
+	int level;
+
+	if (t < next_light)
+		return;
+	next_light = t + LIGHT_EVERY;
+	light_raw = read_int(LIGHT_RAW, -1);
+	if (light_raw < 0)
+		return;
+	light_samples[light_next] = light_raw;
+	light_next = (light_next + 1) % LIGHT_SAMPLES;
+	if (light_count < LIGHT_SAMPLES)
+		light_count++;
+	for (int i = 0; i < light_count; i++)
+		sum += light_samples[i];
+	level = light_level(sum / light_count);
+	if (abs(level - brightness) >= LIGHT_DEADBAND)
+		set_brightness(level);
 }
 
 /* --------------------------------------------------------------- drawing */
@@ -191,9 +310,9 @@ static void text(int x, int y, uint32_t color, const char *s)
 
 static void button_rect(int i, int *x, int *y, int *w)
 {
-	static const int rows[] = { Y_ROT, Y_FPS, Y_KEEP };
+	static const int rows[] = { Y_ROT, Y_FPS, Y_KEEP, Y_AUTO };
 	int group = buttons[i].group, first = 0, count = 0;
-	int left = group == G_ROT ? PAD : PAD + LABEL_W;
+	int left = group == G_ROT ? PAD : group == G_AUTO ? PW - PAD - AUTO_W : PAD + LABEL_W;
 
 	for (int b = 0; b < NBUTTONS; b++) {
 		if (buttons[b].group == group) {
@@ -209,7 +328,8 @@ static void button_rect(int i, int *x, int *y, int *w)
 
 static int button_selected(const struct button *b, const struct panel_settings *s, int rot)
 {
-	return b->group == G_ROT ? b->value == rot :
+	return b->group == G_AUTO ? auto_brightness :
+	       b->group == G_ROT ? b->value == rot :
 	       b->group == G_FPS ? b->value == s->fps : b->value == s->keepalive_ms;
 }
 
@@ -244,7 +364,8 @@ static void draw_controls(void)
 	struct panel_settings set;
 	char line[64], encoder[16];
 	float pc_fps, pc_ms;
-	int rot, percent = (brightness * 100 + BL_MAX / 2) / BL_MAX;
+	int rot, shown = auto_brightness ? bl_level : brightness;
+	int percent = (shown * 100 + BL_MAX / 2) / BL_MAX;
 
 	pthread_mutex_lock(&plock);
 	st = stats;
@@ -262,11 +383,14 @@ static void draw_controls(void)
 		snprintf(line, sizeof(line), "Battery not available");
 	text(PAD, Y_BATTERY, C_TEXT, line);
 
-	snprintf(line, sizeof(line), "Brightness %d%%", percent);
+	if (auto_brightness)
+		snprintf(line, sizeof(line), "Brightness %d%%  light %d", percent, light_raw);
+	else
+		snprintf(line, sizeof(line), "Brightness %d%%", percent);
 	text(PAD, Y_BRIGHT, C_TEXT, line);
 	{
 		int track = PW - 2 * PAD;
-		int knob = (brightness - BL_MIN) * (track - 20) / (BL_MAX - BL_MIN);
+		int knob = (shown - BL_MIN) * (track - 20) / (BL_MAX - BL_MIN);
 
 		fill(PAD, Y_SLIDER + 16, track, 12, C_BTN);
 		fill(PAD, Y_SLIDER + 16, knob + 10, 12, C_ACCENT);
@@ -396,7 +520,6 @@ static int is_open(void)
 
 static void show(void)
 {
-	brightness = read_int(BL_PATH, brightness);
 	read_battery();
 	last_touch = now();
 	redraw();
@@ -414,6 +537,7 @@ static void on_key(int code, int value)
 	} else if ((code == KEY_VOLUMEUP || code == KEY_VOLUMEDOWN) && value) {
 		if (!is_open())
 			show();
+		set_auto(0);
 		set_brightness(brightness + (code == KEY_VOLUMEUP ? BL_STEP : -BL_STEP));
 		last_touch = now();
 		redraw();
@@ -422,6 +546,10 @@ static void on_key(int code, int value)
 
 static void select_button(const struct button *b)
 {
+	if (b->group == G_AUTO) {
+		set_auto(!auto_brightness);
+		return;
+	}
 	pthread_mutex_lock(&plock);
 	switch (b->group) {
 	case G_ROT:
@@ -479,10 +607,11 @@ static void on_touch(int down, int pressed, int ux, int uy, int rot)
 	if (dragging) {
 		int track = PW - 2 * PAD - 20;
 		int v = (px - PAD - 10) * (BL_MAX - BL_MIN) / track + BL_MIN;
-		int old = brightness;
+		int old = brightness, was_auto = auto_brightness;
 
+		set_auto(0);
 		set_brightness(v);
-		if (brightness != old)
+		if (brightness != old || was_auto)
 			redraw();
 	}
 }
@@ -535,7 +664,7 @@ static void *input_thread(void *arg)
 		struct input_event ev[32];
 
 		/* poll ignores a negative fd: the cable check works anyway */
-		poll(pfd, 2, 500);
+		poll(pfd, 2, brightness != bl_level ? FADE_EVERY * 1000 : 500);
 		if (pfd[1].revents & POLLIN) {
 			int n = read(keys, ev, sizeof(ev));
 
@@ -572,12 +701,15 @@ static void *input_thread(void *arg)
 		}
 
 		check_power();
+		if (auto_brightness)
+			light_tick();
+		fade_tick();
 		if (is_open() && !power_lost) {
 			double t = now();
 
 			if (t - last_touch >= HIDE_AFTER) {
 				hide();
-			} else if (t - last_redraw >= 1) {
+			} else if (t - last_redraw >= (brightness != bl_level ? 0.1 : 1)) {
 				if (t - last_battery >= 5)
 					read_battery();
 				redraw();
@@ -596,6 +728,8 @@ int panel_start(void)
 	int fd = open_touch();
 
 	display_size(&fb_w, &fb_h);
+	brightness = bl_level = read_int(BL_PATH, brightness);
+	bl_exact = bl_level;
 	return pthread_create(&th, NULL, input_thread, (void *)(intptr_t)fd);
 }
 

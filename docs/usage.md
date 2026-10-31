@@ -34,6 +34,7 @@ A touch anywhere, Power or Volume opens it. A touch outside or Power closes it, 
 | Entry | Meaning |
 | --- | --- |
 | Brightness | slider; the minimum is 4%, so the screen never goes black. Volume also changes it by 5% |
+| Auto | the light sensor sets the brightness: it follows the mean of the last 5 seconds and fades slowly. Moving the slider or pressing Volume turns it off |
 | Land, Port, Land 180, Port 180 | orientation. In portrait the PC recreates the monitor at 800×1280 |
 | FPS limit | 30, 45 or 60: lowering it reduces the tablet's work |
 | Repeat ms | how long after the last change the PC resends the image. It does not affect smoothness: leave it at 50 |
