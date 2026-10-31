@@ -1,0 +1,9 @@
+# Servizio utente: lo avvia la regola udev quando compare il tablet.
+[Unit]
+Description=Galaxy Note 10.1 come monitor USB
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/GalaxyNoteDisplay --once
+Restart=on-failure
+RestartSec=2

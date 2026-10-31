@@ -1,0 +1,19 @@
+# Dati unici del tablet: EFS contiene IMEI e calibrazione radio. Mai in una repo.
+backup/
+tablet/backup/
+*.img
+*.tar
+*.tar.md5
+
+# File proprietari o di terzi, estratti dal proprio tablet
+vendor/
+tablet/vendor/
+*.bin
+*.apk
+
+# Risultati della compilazione
+build/
+tablet/build/
+host/GalaxyNoteDisplay
+__pycache__/
+*.pyc
