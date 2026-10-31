@@ -1,1 +1,1 @@
-"""Galaxy Note Display: il Galaxy Note 10.1 come monitor virtuale via USB."""
+"""Galaxy Note Display: the Galaxy Note 10.1 as a virtual monitor over USB."""

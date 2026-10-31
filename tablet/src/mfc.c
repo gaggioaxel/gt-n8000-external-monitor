@@ -1,10 +1,10 @@
 /*
- * Decodifica H.264 con il decoder hardware MFC v5 dell'Exynos 4412, tramite le ioctl
- * del driver Samsung mfc5x (/dev/s3c-mfc) del kernel 3.0. Strutture e costanti vengono
- * dagli header del driver in ../ref (LineageOS android_kernel_samsung_smdk4412, cm-14.1).
+ * H.264 decoding with the Exynos 4412 MFC v5 hardware decoder, through the ioctls of the
+ * Samsung mfc5x driver (/dev/s3c-mfc) of kernel 3.0. Structures and constants come from the
+ * driver headers in kernel/ (LineageOS android_kernel_samsung_smdk4412, cm-14.1).
  *
- * Sequenza: mmap del device -> GET_IN_BUF (buffer stream) -> GET_REAL_ADDR (fisico)
- * -> DEC_INIT con SPS+PPS+IDR -> DEC_EXE per ogni access unit.
+ * Sequence: mmap the device -> GET_IN_BUF (stream buffer) -> GET_REAL_ADDR (physical)
+ * -> DEC_INIT with SPS+PPS+IDR -> DEC_EXE for each access unit.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -31,7 +31,7 @@ static int mfc_ioctl(unsigned long req, struct mfc_common_args *arg, const char 
 	int r = ioctl(fd, req, arg);
 
 	if (r < 0 || arg->ret_code != MFC_OK) {
-		fprintf(stderr, "mfc: %s fallita (ret %d, codice %d, errno %d)\n",
+		fprintf(stderr, "mfc: %s failed (ret %d, code %d, errno %d)\n",
 			what, r, arg->ret_code, errno);
 		return -1;
 	}
@@ -47,12 +47,12 @@ int mfc_open(void)
 		perror("mfc: open /dev/s3c-mfc");
 		return -1;
 	}
-	/* GET_MMAP_SIZE restituisce la dimensione come valore di ritorno dell'ioctl */
+	/* GET_MMAP_SIZE returns the size as the ioctl return value */
 	memset(&a, 0, sizeof(a));
 	int size = ioctl(fd, IOCTL_MFC_GET_MMAP_SIZE, &a);
 
 	if (size <= 0) {
-		fprintf(stderr, "mfc: GET_MMAP_SIZE fallita (%d)\n", size);
+		fprintf(stderr, "mfc: GET_MMAP_SIZE failed (%d)\n", size);
 		return -1;
 	}
 	mapped_size = size;
@@ -78,7 +78,7 @@ int mfc_open(void)
 	if (mfc_ioctl(IOCTL_MFC_GET_REAL_ADDR, &a, "GET_REAL_ADDR") < 0)
 		return -1;
 	strm_phys = a.args.real_addr.addr;
-	printf("mfc: mmap %zu byte, stream buffer offset 0x%x fisico 0x%08x\n",
+	printf("mfc: mmap %zu bytes, stream buffer offset 0x%x physical 0x%08x\n",
 	       mapped_size, offset, strm_phys);
 	return 0;
 }

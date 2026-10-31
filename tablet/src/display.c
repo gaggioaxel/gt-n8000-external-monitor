@@ -1,8 +1,8 @@
 /*
- * Visualizzazione su fb0 del kernel Samsung 3.0: la FIMC converte il frame del decoder
- * (NV12 a tile 64x32, per indirizzo fisico, zero copie) in RGB32 nella pagina nascosta di
- * fb0, poi FBIOPAN_DISPLAY la rende visibile. Stessa sequenza di V4L2 "one shot" del
- * libhwcomposer exynos4 (../ref/SecHWCUtils.c), che usa /dev/video3 (FIMC3).
+ * Display on the fb0 of the Samsung 3.0 kernel: the FIMC converts the decoder frame (64x32
+ * tiled NV12, by physical address, zero copy) to RGB32 in the hidden page of fb0, then
+ * FBIOPAN_DISPLAY makes it visible. Same V4L2 "one shot" sequence as the exynos4
+ * libhwcomposer (SecHWCUtils.c in hardware/samsung), which uses /dev/video3 (FIMC3).
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -20,12 +20,12 @@
 
 #define FIMC_DEV		"/dev/video3"
 #define FB_DEV			"/dev/fb0"
-#define V4L2_PIX_FMT_NV12T	v4l2_fourcc('T', 'V', '1', '2')	/* Samsung: NV12 a tile 64x32 */
-#define V4L2_CID_ROTATION	0x08000000			/* Samsung, dal libhwcomposer */
+#define V4L2_PIX_FMT_NV12T	v4l2_fourcc('T', 'V', '1', '2')	/* Samsung: 64x32 tiled NV12 */
+#define V4L2_CID_ROTATION	0x08000000			/* Samsung, from libhwcomposer */
 
 /*
- * v4l2_buffer del kernel 3.0: timeval a 32 bit. Il toolchain usa time_t a 64 bit, quindi la
- * struttura dell'header ha un'altra dimensione e VIDIOC_QBUF un altro numero di ioctl.
+ * Kernel 3.0 v4l2_buffer: 32-bit timeval. The toolchain uses a 64-bit time_t, so the header
+ * structure has a different size and VIDIOC_QBUF a different ioctl number.
  */
 struct kbuffer {
 	uint32_t index, type, bytesused, flags, field;
@@ -35,14 +35,14 @@ struct kbuffer {
 	unsigned long userptr;
 	uint32_t length, input, reserved;
 };
-_Static_assert(sizeof(struct kbuffer) == 68, "v4l2_buffer del kernel 3.0");
-_Static_assert(sizeof(struct v4l2_framebuffer) == 44, "v4l2_framebuffer del kernel 3.0");
-_Static_assert(sizeof(struct v4l2_format) == 204, "v4l2_format del kernel 3.0");
+_Static_assert(sizeof(struct kbuffer) == 68, "kernel 3.0 v4l2_buffer");
+_Static_assert(sizeof(struct v4l2_framebuffer) == 44, "kernel 3.0 v4l2_framebuffer");
+_Static_assert(sizeof(struct v4l2_format) == 204, "kernel 3.0 v4l2_format");
 
 #define KVIDIOC_QBUF	_IOWR('V', 15, struct kbuffer)
 #define KVIDIOC_DQBUF	_IOWR('V', 17, struct kbuffer)
 
-/* Dal driver fimc: QBUF riceve in userptr gli indirizzi fisici dei piani */
+/* From the fimc driver: QBUF gets the physical plane addresses in userptr */
 struct fimc_buf {
 	unsigned int base[3];
 	size_t length[3];
@@ -53,7 +53,7 @@ static struct fb_var_screeninfo var;
 static struct fb_fix_screeninfo fix;
 static struct v4l2_framebuffer fbuf;
 static uint8_t *fb_map;
-static int back;			/* pagina nascosta, 0 o 1 */
+static int back;			/* hidden page, 0 or 1 */
 static int src_w, src_h, crop_w, crop_h;
 
 static int vioctl(unsigned long req, void *arg, const char *what)
@@ -61,7 +61,7 @@ static int vioctl(unsigned long req, void *arg, const char *what)
 	int r = ioctl(fimc_fd, req, arg);
 
 	if (r < 0)
-		fprintf(stderr, "fimc: %s fallita (errno %d)\n", what, errno);
+		fprintf(stderr, "fimc: %s failed (errno %d)\n", what, errno);
 	return r;
 }
 
@@ -81,12 +81,12 @@ int display_open(void)
 		return -1;
 	}
 	if (var.yres_virtual < 2 * var.yres) {
-		fprintf(stderr, "display: serve il doppio buffer, area virtuale %ux%u\n",
+		fprintf(stderr, "display: double buffering needed, virtual area %ux%u\n",
 			var.xres_virtual, var.yres_virtual);
 		return -1;
 	}
 	back = var.yoffset ? 0 : 1;
-	printf("display: fb0 %ux%u virtuale %ux%u %u bpp, riga %u, fisico 0x%08lx, offset y %u\n",
+	printf("display: fb0 %ux%u virtual %ux%u %u bpp, stride %u, physical 0x%08lx, y offset %u\n",
 	       var.xres, var.yres, var.xres_virtual, var.yres_virtual, var.bits_per_pixel,
 	       fix.line_length, fix.smem_start, var.yoffset);
 	fb_map = mmap(NULL, fix.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
@@ -95,7 +95,7 @@ int display_open(void)
 		fb_map = NULL;
 		return -1;
 	}
-	/* Via il menu di avvio: fino al primo frame lo schermo resta nero */
+	/* Clear the boot menu: the screen stays black until the first frame */
 	memset(fb_map, 0, 2 * var.yres * fix.line_length);
 
 	fimc_fd = open(FIMC_DEV, O_RDWR);
@@ -106,7 +106,7 @@ int display_open(void)
 	if (vioctl(VIDIOC_QUERYCAP, &cap, "QUERYCAP") < 0)
 		return -1;
 	printf("display: %s, %s\n", (char *)cap.driver, (char *)cap.card);
-	/* Va chiamata per prima: alloca ctrl->out, senza cui G_FBUF manda il kernel in panic */
+	/* Must come first: it allocates ctrl->out, without which G_FBUF panics the kernel */
 	memset(&f, 0, sizeof(f));
 	f.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 	return vioctl(VIDIOC_G_FMT, &f, "G_FMT output") < 0 ? -1 : 0;
@@ -130,16 +130,16 @@ int display_configure(int buf_w, int buf_h, int w, int h)
 	return 0;
 }
 
-/* Il driver accetta i controlli solo a stream fermo: fra un frame e l'altro lo è */
+/* The driver accepts controls only while stopped, which it is between frames */
 static int set_destination(unsigned int phys, int rotation)
 {
 	struct v4l2_control c = { .id = V4L2_CID_ROTATION, .value = rotation };
 	struct v4l2_format f;
-	int swap = rotation == 90 || rotation == 270;	/* a 90 gradi la destinazione è verticale */
+	int swap = rotation == 90 || rotation == 270;	/* at 90 degrees the destination is portrait */
 	int w = swap ? var.yres : var.xres;
 	int h = swap ? var.xres : var.yres;
 
-	if (vioctl(VIDIOC_S_CTRL, &c, "S_CTRL rotazione") < 0)
+	if (vioctl(VIDIOC_S_CTRL, &c, "S_CTRL rotation") < 0)
 		return -1;
 
 	fbuf.base = (void *)phys;
@@ -245,7 +245,7 @@ int display_flip(void)
 {
 	var.yoffset = back * var.yres;
 	if (ioctl(fb_fd, FBIOPAN_DISPLAY, &var) < 0) {
-		fprintf(stderr, "display: FBIOPAN_DISPLAY fallita (errno %d)\n", errno);
+		fprintf(stderr, "display: FBIOPAN_DISPLAY failed (errno %d)\n", errno);
 		return -1;
 	}
 	back = !back;

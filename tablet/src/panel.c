@@ -1,10 +1,10 @@
 /*
- * Pannello a comparsa: un tocco o Accensione lo aprono, Volume regola la luminosità e lo
- * apre se è chiuso. Si richiude da solo dopo alcuni secondi o con un tocco fuori. Mostra
- * batteria e statistiche, regola luminosità, rotazione, limite di fps e keepalive del PC.
+ * Pop-up panel: a touch or Power opens it, Volume changes brightness and opens it if closed.
+ * It closes by itself after a few seconds or with a touch outside. It shows battery and
+ * statistics, and sets brightness, rotation, the fps limit and the PC keepalive.
  *
- * Il thread di input fa tutto il lavoro lento (sysfs, disegno del testo) e pubblica
- * un'immagine già ruotata come fb0; il presenter deve solo copiarla sopra il video.
+ * The input thread does all the slow work (sysfs, text drawing) and publishes an image
+ * already rotated like fb0; the presenter only has to copy it over the video.
  */
 #include <fcntl.h>
 #include <poll.h>
@@ -24,7 +24,7 @@
 #include "font.h"
 #include "panel.h"
 
-_Static_assert(sizeof(struct input_event) == 16, "input_event del kernel 3.0");
+_Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 
 #define TOUCH_NAME	"sec_touchscreen"
 #define KEYS_NAME	"gpio-keys"
@@ -32,21 +32,21 @@ _Static_assert(sizeof(struct input_event) == 16, "input_event del kernel 3.0");
 #define BAT_PATH	"/sys/class/power_supply/battery/"
 #define USB_ONLINE	"/sys/class/power_supply/usb/online"
 #define AC_ONLINE	"/sys/class/power_supply/ac/online"
-#define OFF_AFTER	10		/* secondi fra il distacco del cavo e lo spegnimento */
+#define OFF_AFTER	10		/* seconds between cable removal and power off */
 #define BL_MAX		255
-#define BL_MIN		10		/* mai a zero: il pannello servirebbe a riaccendersi */
-#define BL_STEP		13		/* 5% a ogni pressione di Volume */
+#define BL_MIN		10		/* never zero: the panel would be needed to turn it back on */
+#define BL_STEP		13		/* 5% for each Volume press */
 
-#define HIDE_AFTER	6.0		/* secondi senza tocchi */
+#define HIDE_AFTER	6.0		/* seconds without touches */
 #define PW		620
 #define PH		456
 #define PAD		12
-#define PTOP		8		/* distanza dal bordo superiore */
+#define PTOP		8		/* distance from the top edge */
 #define ROW_H		36
 #define BTN_H		52
 #define LABEL_W		150
 
-/* In colonna, dall'alto: gli Y sono relativi al pannello */
+/* Top to bottom: Y values are relative to the panel */
 #define Y_BATTERY	8
 #define Y_BRIGHT	(Y_BATTERY + ROW_H)
 #define Y_SLIDER	(Y_BRIGHT + ROW_H)
@@ -71,7 +71,7 @@ struct button {
 };
 
 static const struct button buttons[] = {
-	{ G_ROT, 180, "Oriz" }, { G_ROT, 90, "Vert" }, { G_ROT, 0, "Oriz 180" }, { G_ROT, 270, "Vert 180" },
+	{ G_ROT, 180, "Land" }, { G_ROT, 90, "Port" }, { G_ROT, 0, "Land 180" }, { G_ROT, 270, "Port 180" },
 	{ G_FPS, 30, "30" }, { G_FPS, 45, "45" }, { G_FPS, 60, "60" },
 	{ G_KEEP, 25, "25" }, { G_KEEP, 50, "50" }, { G_KEEP, 100, "100" }, { G_KEEP, 250, "250" },
 };
@@ -79,7 +79,7 @@ static const struct button buttons[] = {
 
 static pthread_mutex_t plock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Protetti da plock */
+/* Protected by plock */
 static int rotation = 180;
 static struct panel_settings settings = { 0, 60, 50 };
 static unsigned int settings_gen;
@@ -90,7 +90,7 @@ static int visible, idle_drawn;
 static int img_x, img_y, img_w, img_h;
 static const uint32_t *img;
 
-/* Solo del thread del touch */
+/* Owned by the input thread */
 static uint32_t canvas[PH][PW];
 static uint32_t images[2][PW * PH];
 static int next_image;
@@ -100,7 +100,7 @@ static int brightness = 150;
 static int bat_percent = -1, bat_temp;
 static char bat_status[24];
 static double last_touch, last_battery, last_power;
-static double power_lost;		/* istante del distacco, 0 se il cavo c'è */
+static double power_lost;		/* time of removal, 0 while the cable is in */
 
 static double now(void)
 {
@@ -135,8 +135,8 @@ static void read_battery(void)
 	bat_status[0] = 0;
 	if (n > 0) {
 		buf[n] = 0;
-		strcpy(bat_status, !strncmp(buf, "Charging", 8) ? "in carica" :
-				   !strncmp(buf, "Full", 4) ? "piena" : "");
+		strcpy(bat_status, !strncmp(buf, "Charging", 8) ? "charging" :
+				   !strncmp(buf, "Full", 4) ? "full" : "");
 	}
 	bat_percent = read_int(BAT_PATH "capacity", -1);
 	bat_temp = read_int(BAT_PATH "temp", 0);
@@ -160,11 +160,11 @@ static void set_brightness(int value)
 		return;
 	n = snprintf(buf, sizeof(buf), "%d\n", value);
 	if (write(fd, buf, n) < 0)
-		perror("pannello: luminosità");
+		perror("panel: brightness");
 	close(fd);
 }
 
-/* --------------------------------------------------------------- disegno */
+/* --------------------------------------------------------------- drawing */
 
 static void fill(int x, int y, int w, int h, uint32_t color)
 {
@@ -173,7 +173,7 @@ static void fill(int x, int y, int w, int h, uint32_t color)
 			canvas[r][c] = color;
 }
 
-/* Il font è in codepage 437: à = \x85, ° = \xf8 */
+/* The font is codepage 437: \xf8 is the degree sign */
 static void text(int x, int y, uint32_t color, const char *s)
 {
 	for (; *s && x + FONT_W <= PW; s++, x += FONT_W) {
@@ -256,13 +256,13 @@ static void draw_controls(void)
 	pthread_mutex_unlock(&plock);
 
 	if (bat_percent >= 0)
-		snprintf(line, sizeof(line), "Batteria %d%%  %s  %d.%d\xf8""C", bat_percent, bat_status,
+		snprintf(line, sizeof(line), "Battery %d%%  %s  %d.%d\xf8""C", bat_percent, bat_status,
 			 bat_temp / 10, abs(bat_temp) % 10);
 	else
-		snprintf(line, sizeof(line), "Batteria non disponibile");
+		snprintf(line, sizeof(line), "Battery not available");
 	text(PAD, Y_BATTERY, C_TEXT, line);
 
-	snprintf(line, sizeof(line), "Luminosit\x85 %d%%", percent);
+	snprintf(line, sizeof(line), "Brightness %d%%", percent);
 	text(PAD, Y_BRIGHT, C_TEXT, line);
 	{
 		int track = PW - 2 * PAD;
@@ -273,8 +273,8 @@ static void draw_controls(void)
 		fill(PAD + knob, Y_SLIDER + 2, 20, 40, C_TEXT);
 	}
 
-	text(PAD, Y_FPS + 10, C_DIM, "Limite fps");
-	text(PAD, Y_KEEP + 10, C_DIM, "Ripeti ms");
+	text(PAD, Y_FPS + 10, C_DIM, "FPS limit");
+	text(PAD, Y_KEEP + 10, C_DIM, "Repeat ms");
 	for (int i = 0; i < NBUTTONS; i++) {
 		int x, y, w, sel = button_selected(&buttons[i], &set, rot);
 		int len = strlen(buttons[i].label) * FONT_W;
@@ -290,9 +290,9 @@ static void draw_controls(void)
 	snprintf(line, sizeof(line), "Tablet dec %.1f ms  fimc %.1f ms", st.decode_ms, st.fimc_ms);
 	text(PAD, Y_INFO + ROW_H - 2, C_DIM, line);
 	if (encoder[0])
-		snprintf(line, sizeof(line), "PC %s  %.0f fps  codifica %.1f ms", encoder, pc_fps, pc_ms);
+		snprintf(line, sizeof(line), "PC %s  %.0f fps  encode %.1f ms", encoder, pc_fps, pc_ms);
 	else
-		snprintf(line, sizeof(line), "PC non collegato");
+		snprintf(line, sizeof(line), "PC not connected");
 	text(PAD, Y_INFO + 2 * ROW_H - 4, C_DIM, line);
 }
 
@@ -301,13 +301,13 @@ static void draw_alert(void)
 	char line[64];
 	int left = OFF_AFTER - (int)(now() - power_lost);
 
-	text(PAD + 16, 120, C_TEXT, "Collegamento con il PC perso");
-	snprintf(line, sizeof(line), "Spegnimento tra %d s", left > 0 ? left : 0);
+	text(PAD + 16, 120, C_TEXT, "Connection to the PC lost");
+	snprintf(line, sizeof(line), "Powering off in %d s", left > 0 ? left : 0);
 	text(PAD + 16, 180, C_TEXT, line);
-	text(PAD + 16, 240, C_DIM, "Ricollega il cavo per annullare");
+	text(PAD + 16, 240, C_DIM, "Reconnect the cable to cancel");
 }
 
-/* Prepara l'immagine e la pubblica; da qui in poi il pannello è visibile */
+/* Prepares the image and publishes it; from here on the panel is visible */
 static void redraw(void)
 {
 	fill(0, 0, PW, PH, C_BORDER);
@@ -317,7 +317,7 @@ static void redraw(void)
 	else
 		draw_controls();
 
-	/* Rettangolo del pannello in coordinate di fb0 */
+	/* Panel rectangle in fb0 coordinates */
 	int rot = panel_rotation();
 	int x0 = (user_width(rot) - PW) / 2, ax, ay, bx, by;
 
@@ -354,7 +354,7 @@ static void hide(void)
 	pthread_mutex_unlock(&plock);
 }
 
-/* Se non si riesce a leggere lo stato si considera il cavo collegato: mai spegnere per un errore */
+/* If the state cannot be read the cable counts as connected: never power off on an error */
 static void check_power(void)
 {
 	double t = now();
@@ -364,18 +364,18 @@ static void check_power(void)
 	last_power = t;
 	if (read_int(USB_ONLINE, 1) || read_int(AC_ONLINE, 0)) {
 		if (power_lost) {
-			printf("cavo ricollegato, spegnimento annullato\n");
+			printf("cable reconnected, power off cancelled\n");
 			power_lost = 0;
 			hide();
 		}
 		return;
 	}
 	if (!power_lost) {
-		printf("cavo staccato, spegnimento fra %d s\n", OFF_AFTER);
+		printf("cable removed, powering off in %d s\n", OFF_AFTER);
 		power_lost = t;
 	}
 	if (t - power_lost >= OFF_AFTER) {
-		printf("spegnimento\n");
+		printf("powering off\n");
 		sync();
 		reboot(RB_POWER_OFF);
 	}
@@ -501,7 +501,7 @@ static int open_input(const char *wanted)
 			return fd;
 		close(fd);
 	}
-	fprintf(stderr, "pannello: %s non trovato\n", wanted);
+	fprintf(stderr, "panel: %s not found\n", wanted);
 	return -1;
 }
 
@@ -534,7 +534,7 @@ static void *input_thread(void *arg)
 		struct pollfd pfd[2] = { { fd, POLLIN, 0 }, { keys, POLLIN, 0 } };
 		struct input_event ev[32];
 
-		/* Con fd negativo poll ignora la voce: il controllo del cavo funziona comunque */
+		/* poll ignores a negative fd: the cable check works anyway */
 		poll(pfd, 2, 500);
 		if (pfd[1].revents & POLLIN) {
 			int n = read(keys, ev, sizeof(ev));
@@ -551,7 +551,7 @@ static void *input_thread(void *arg)
 					if (ev[i].code == ABS_MT_SLOT)
 						slot = ev[i].value;
 					else if (slot != 0)
-						continue;	/* conta solo il primo dito */
+						continue;	/* only the first finger counts */
 					else if (ev[i].code == ABS_MT_TRACKING_ID)
 						down = ev[i].value >= 0;
 					else if (ev[i].code == ABS_MT_POSITION_X)
@@ -588,7 +588,7 @@ static void *input_thread(void *arg)
 	return NULL;
 }
 
-/* --------------------------------------------------------------- interfaccia */
+/* --------------------------------------------------------------- interface */
 
 int panel_start(void)
 {

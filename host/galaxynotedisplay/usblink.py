@@ -1,4 +1,4 @@
-"""Collegamento USB con il tablet: dispositivo accessorio Android, due endpoint bulk."""
+"""USB link with the tablet: Android accessory device, two bulk endpoints."""
 import struct
 import time
 
@@ -8,7 +8,7 @@ import usb.util
 MAGIC = 0xA5
 T_NOOP, T_CONFIG, T_FRAME, T_KEY, T_INFO, T_SETTINGS = 0, 1, 2, 3, 4, 0x13
 GOOGLE = 0x18D1
-ACCESSORY = 0x2D00  # il tablet si presenta già così: nessuno scambio AOA
+ACCESSORY = 0x2D00  # the tablet already presents itself like this: no AOA exchange
 
 
 def log(*a):
@@ -16,14 +16,14 @@ def log(*a):
 
 
 def open_accessory():
-    """Attende il tablet e restituisce il dispositivo con i suoi endpoint."""
+    """Waits for the tablet and returns the device with its endpoints."""
     waited = False
     while True:
         dev = usb.core.find(idVendor=GOOGLE, idProduct=ACCESSORY)
         if dev is not None:
             break
         if not waited:
-            log("In attesa del tablet via USB…")
+            log("Waiting for the tablet on USB...")
             waited = True
         time.sleep(1)
 
@@ -38,7 +38,7 @@ def open_accessory():
         usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT)
     ep_in = usb.util.find_descriptor(intf, custom_match=lambda e:
         usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN)
-    log("Tablet collegato")
+    log("Tablet connected")
     return dev, ep_out, ep_in
 
 
@@ -50,8 +50,8 @@ class Link:
 
     def send(self, ptype, payload):
         pkt = struct.pack(">BBI", MAGIC, ptype, len(payload)) + payload
-        # Se la lunghezza è un multiplo del pacchetto USB il tablet aspetterebbe
-        # altri dati: aggiungo un noop così il trasferimento finisce "corto".
+        # If the length is a multiple of the USB packet the tablet would wait for more
+        # data: a noop makes the transfer end "short".
         if len(pkt) % self.mps == 0:
             pkt += struct.pack(">BBI", MAGIC, T_NOOP, 0)
         self.out.write(pkt, timeout=3000)
@@ -65,7 +65,7 @@ class Link:
 
 
 def input_loop(link, on_settings):
-    """Legge i pacchetti del tablet; torna quando il cavo si stacca."""
+    """Reads the tablet packets; returns when the cable is removed."""
     buf = bytearray()
     while link.alive:
         try:

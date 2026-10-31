@@ -1,15 +1,15 @@
 """
-GalaxyNoteDisplay - host Ubuntu per sessioni Wayland (GNOME).
+GalaxyNoteDisplay - Ubuntu host for Wayland (GNOME) sessions.
 
-Chiede a Mutter un monitor virtuale (API org.gnome.Mutter.ScreenCast, la stessa
-del desktop remoto di GNOME), ne riceve i frame via PipeWire, li codifica in
-H.264 a bassa latenza con GStreamer e li invia al tablet via USB. Niente Xorg,
-niente sudo, niente schermo fittizio. Solo video: il tablet non controlla il desktop. Orientamento, fps e keepalive
-li sceglie il pannello del tablet, che li manda qui.
+Asks Mutter for a virtual monitor (org.gnome.Mutter.ScreenCast API, the same as
+GNOME remote desktop), receives its frames through PipeWire, encodes them to
+low-latency H.264 with GStreamer and sends them to the tablet over USB. No Xorg,
+no sudo, no dummy screen. Video only: the tablet does not control the desktop.
+Orientation, fps and keepalive are chosen on the tablet panel, which sends them here.
 
   GalaxyNoteDisplay
   GalaxyNoteDisplay --stats --encoder va
-  GalaxyNoteDisplay --test          # senza tablet: solo cattura e codifica
+  GalaxyNoteDisplay --test          # without a tablet: capture and encode only
 """
 import argparse
 import collections
@@ -29,10 +29,10 @@ SC_PATH = "/org/gnome/Mutter/ScreenCast"
 CURSOR_EMBEDDED = 1
 
 
-# ---------------------------------------------------------------- monitor virtuale
+# ---------------------------------------------------------------- virtual monitor
 
 class VirtualMonitor:
-    """Sessione ScreenCast di Mutter con un monitor virtuale; chiama on_node(id) quando il nodo PipeWire è pronto."""
+    """Mutter ScreenCast session with a virtual monitor; calls on_node(id) when the PipeWire node is ready."""
 
     def __init__(self, on_node):
         self.stopping = False
@@ -59,7 +59,7 @@ class VirtualMonitor:
     def _closed(self):
         if self.stopping:
             return
-        log("Mutter ha chiuso il monitor virtuale")
+        log("Mutter closed the virtual monitor")
         os._exit(1)
 
     def stop(self):
@@ -71,7 +71,7 @@ class VirtualMonitor:
 
 
 def main_logical_size():
-    """Dimensione logica (pixel diviso scala) del monitor principale di GNOME."""
+    """Logical size (pixels divided by scale) of the main GNOME monitor."""
     bus = Gio.bus_get_sync(Gio.BusType.SESSION)
     _, monitors, logical, _ = bus.call_sync(
         "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
@@ -81,26 +81,26 @@ def main_logical_size():
     for spec, modes, _ in monitors:
         if spec == specs[0]:
             mode = next(m for m in modes if m[6].get("is-current"))
-            # Pari, per la sottocampionatura 4:2:0 dell'encoder
+            # Even, for the encoder 4:2:0 subsampling
             return (round(mode[1] / scale) // 2 * 2, round(mode[2] / scale) // 2 * 2)
-    raise RuntimeError("monitor principale non trovato")
+    raise RuntimeError("main monitor not found")
 
 
 # ---------------------------------------------------------------- pipeline
 
 def source_desc(a):
-    """Caps chiesti a Mutter e conversione fino ai frame grezzi da dare all'encoder."""
+    """Caps requested from Mutter and conversion down to the raw frames for the encoder."""
     vw, vh = a.virtual
     w, h = a.size
-    # Con il limite uguale ai propri 60 Hz Mutter salta dei refresh e si ferma a circa 40 fps:
-    # gli chiedo il doppio e il limite vero lo applica on_captured
+    # With a limit equal to its own 60 Hz, Mutter skips refreshes and stops at about 40 fps:
+    # ask for twice that, on_captured applies the real limit
     rate = f"max-framerate={a.max_fps}/1"
     if a.encoder == "va":
         return (f"video/x-raw,width={vw},height={vh},{rate} ! "
                 f"vapostproc ! video/x-raw(memory:VAMemory),format=NV12,width={w},height={h}")
     if a.virtual != a.size and Gst.ElementFactory.find("vaapipostproc"):
-        # Frame grandi: Mutter li passa come DMA-BUF e la GPU Intel li rimpicciolisce,
-        # copiarli in RAM a 3072x1920 dimezzerebbe gli fps
+        # Large frames: Mutter passes them as DMA-BUF and the Intel GPU scales them down,
+        # copying them to RAM at 3072x1920 would halve the fps
         return (f"video/x-raw(memory:DMABuf),width={vw},height={vh},{rate} ! "
                 f"vaapipostproc width={w} height={h} scale-method=hq ! "
                 f"video/x-raw,format=NV12,width={w},height={h}")
@@ -109,7 +109,7 @@ def source_desc(a):
 
 
 def encoder_desc(a):
-    gop = a.fps  # un keyframe al secondo
+    gop = a.fps  # one keyframe per second
     if a.encoder == "x264":
         return (f"x264enc tune=zerolatency speed-preset=ultrafast bframes=0 key-int-max={gop} "
                 f"pass=quant quantizer={a.crf} rc-lookahead=0 sync-lookahead=0 byte-stream=true")
@@ -120,10 +120,10 @@ def encoder_desc(a):
 
 
 def pipeline_desc(a, node):
-    # I caps chiesti a pipewiresrc decidono la risoluzione e la frequenza del monitor virtuale.
-    # Mutter manda frame solo quando lo schermo cambia e on_captured può scartare l'ultimo di una
-    # raffica: keepalive-time ripete l'ultimo frame (in H.264 costa poche decine di byte) così
-    # l'immagine finale arriva comunque, e un tablet appena collegato riceve subito un keyframe.
+    # The caps requested from pipewiresrc set the virtual monitor resolution and frequency.
+    # Mutter sends frames only when the screen changes and on_captured may drop the last one of
+    # a burst: keepalive-time repeats the last frame (a few tens of bytes in H.264) so the final
+    # image arrives anyway, and a newly connected tablet gets a keyframe right away.
     return (f"pipewiresrc name=src path={node} do-timestamp=true always-copy=false "
             f"keepalive-time={a.keepalive} ! "
             f"{source_desc(a)} ! {encoder_desc(a)} ! "
@@ -132,7 +132,7 @@ def pipeline_desc(a, node):
 
 
 def split_nals(au):
-    """Divide un'access unit Annex-B in NAL (con il loro start code a 4 byte)."""
+    """Splits an Annex-B access unit into NALs (with their 4-byte start code)."""
     out, i, n = [], 0, len(au)
     starts = []
     while True:
@@ -149,10 +149,10 @@ def split_nals(au):
     return out
 
 
-# ---------------------------------------------------------------- invio
+# ---------------------------------------------------------------- sending
 
 class Sender:
-    """Riceve le AU dall'appsink e le manda al tablet collegato, se c'è."""
+    """Receives AUs from the appsink and sends them to the connected tablet, if any."""
 
     def __init__(self, a):
         self.a = a
@@ -162,16 +162,16 @@ class Sender:
         self.need_config = True
         self.frames, self.nbytes, self.t0 = 0, 0, time.time()
         self.latency_ms = 0.0
-        # Istanti in cui i frame escono da pipewiresrc; l'encoder (senza B-frame) ne restituisce uno per frame
+        # Times at which frames leave pipewiresrc; the encoder (no B-frames) returns one per frame
         self.captured = collections.deque(maxlen=32)
         self.pipeline = None
         self.next_in = 0.0
         self.on_settings = None
 
     def on_captured(self, pad, info):
-        # Limite di fps prima dell'encoder: in media non più di a.fps, scelto dal pannello del
-        # tablet, con un quarto di frame di tolleranza sul jitter. Senza limite Mutter arriva a
-        # max_fps, il decoder non regge e i frame in coda diventano ritardo visibile
+        # Fps limit before the encoder: on average no more than a.fps, chosen on the tablet
+        # panel, with a quarter-frame jitter tolerance. Without a limit Mutter reaches max_fps,
+        # the decoder cannot keep up and queued frames become visible delay
         now = time.monotonic()
         period = 1 / self.a.fps
         if now < self.next_in - period / 4:
@@ -206,7 +206,7 @@ class Sender:
         buf.unmap(info)
         key = not buf.has_flags(Gst.BufferFlags.DELTA_UNIT)
 
-        # Tempo da quando pipewiresrc ha consegnato il frame all'AU codificata
+        # Time from pipewiresrc delivering the frame to the encoded AU
         if self.captured:
             t_in = self.captured.popleft()
             self.latency_ms = 0.9 * self.latency_ms + 0.1 * (time.monotonic() - t_in) * 1e3
@@ -221,7 +221,7 @@ class Sender:
             elif t == 8:
                 if nal != self.pps:
                     self.pps, self.need_config = nal, True
-            elif t != 9:  # scarto gli access unit delimiter
+            elif t != 9:  # drop access unit delimiters
                 rest.append(nal)
         payload = b"".join(b"\0\0\0\1" + n for n in rest)
 
@@ -240,7 +240,7 @@ class Sender:
                         log(f"Stream {w}x{h} @ {self.a.fps} fps, encoder {self.a.encoder}")
                     link.send(T_KEY if key else T_FRAME, payload)
                 except Exception as e:
-                    log("Errore USB:", e)
+                    log("USB error:", e)
                     link.alive = False
                     self.link = None
 
@@ -251,19 +251,19 @@ class Sender:
             fps = self.frames / dt
             if self.a.stats:
                 log(f"{fps:5.1f} fps  {self.nbytes * 8 / dt / 1e6:6.1f} Mbit/s  "
-                    f"cattura→codifica {self.latency_ms:4.1f} ms")
+                    f"capture to encode {self.latency_ms:4.1f} ms")
             self.frames, self.nbytes, self.t0 = 0, 0, time.time()
             self.send_info(fps)
         return Gst.FlowReturn.OK
 
     def send_info(self, fps):
-        """Encoder, fps inviati e tempo di codifica per il pannello del tablet."""
+        """Encoder, sent fps and encode time for the tablet panel."""
         with self.lock:
             if self.link is not None:
                 try:
                     self.link.send(T_INFO, f"{self.a.encoder} {fps:.1f} {self.latency_ms:.1f}".encode())
                 except Exception as e:
-                    log("Errore USB:", e)
+                    log("USB error:", e)
 
 
 def usb_loop(sender, a):
@@ -271,38 +271,38 @@ def usb_loop(sender, a):
         dev, ep_out, ep_in = open_accessory()
         link = Link(dev, ep_out, ep_in)
         sender.attach(link)
-        input_loop(link, sender.on_settings)  # torna quando il cavo si stacca
+        input_loop(link, sender.on_settings)  # returns when the cable is removed
         sender.detach()
         link.close()
-        log("Tablet scollegato")
+        log("Tablet disconnected")
         if a.once:
-            os._exit(0)  # il monitor virtuale sparisce con il processo
+            os._exit(0)  # the virtual monitor goes away with the process
         time.sleep(1)
 
 
 # ---------------------------------------------------------------- main
 
 def main():
-    ap = argparse.ArgumentParser(prog="GalaxyNoteDisplay", description="Usa il Galaxy Note 10.1 come monitor virtuale via USB (Wayland/GNOME)")
-    ap.add_argument("--size", default="1280x800", help="risoluzione dello stream verso il tablet (default 1280x800)")
+    ap = argparse.ArgumentParser(prog="GalaxyNoteDisplay", description="Use the Galaxy Note 10.1 as a virtual monitor over USB (Wayland/GNOME)")
+    ap.add_argument("--size", default="1280x800", help="stream resolution sent to the tablet (default 1280x800)")
     ap.add_argument("--match-main", action="store_true",
-                    help="monitor virtuale grande quanto quello principale in pixel logici, così il "
-                         "cursore passa da uno all'altro senza salti; lo stream viene rimpicciolito a --size")
+                    help="virtual monitor as large as the main one in logical pixels, so the cursor "
+                         "moves between them without jumps; the stream is scaled down to --size")
     ap.add_argument("--fps", type=int, default=60)
     ap.add_argument("--keepalive", type=int, default=50, metavar="MS",
-                    help="ripete l'ultimo frame dopo MS millisecondi senza cambiamenti (default 50)")
-    ap.add_argument("--crf", type=int, default=22, help="quantizzatore: più basso = migliore (default 22)")
+                    help="repeat the last frame after MS milliseconds without changes (default 50)")
+    ap.add_argument("--crf", type=int, default=22, help="quantizer: lower is better (default 22)")
     ap.add_argument("--encoder", choices=["x264", "va"], default="x264")
-    ap.add_argument("--stats", action="store_true", help="mostra fps, bitrate e latenza di codifica")
-    ap.add_argument("--test", action="store_true", help="non usa il tablet: solo cattura e codifica")
+    ap.add_argument("--stats", action="store_true", help="show fps, bitrate and encode latency")
+    ap.add_argument("--test", action="store_true", help="do not use the tablet: capture and encode only")
     ap.add_argument("--once", action="store_true",
-                    help="esce quando il tablet si scollega (per il servizio avviato da udev)")
+                    help="exit when the tablet disconnects (for the service started by udev)")
     a = ap.parse_args()
     a.size = tuple(int(v) for v in a.size.lower().split("x"))
     a.virtual = main_logical_size() if a.match_main else a.size
-    a.max_fps = a.fps * 2  # resta fisso: a.fps cambia dal pannello del tablet
+    a.max_fps = a.fps * 2  # stays fixed: a.fps changes from the tablet panel
     if a.match_main and a.encoder == "va":
-        log("Con --match-main uso x264: vah264lpenc non riceve i frame DMA-BUF e a quella risoluzione rallenta")
+        log("With --match-main x264 is used: vah264lpenc does not take DMA-BUF frames and slows down at that resolution")
         a.encoder = "x264"
     if a.test:
         a.stats = True
@@ -314,9 +314,9 @@ def main():
     usb_started = False
 
     def apply_settings(portrait, fps, keepalive):
-        """Impostazioni scelte sul tablet, nel main loop. Il collegamento USB resta aperto."""
+        """Settings chosen on the tablet, in the main loop. The USB link stays open."""
         nonlocal vm
-        log(f"Dal tablet: {'verticale' if portrait else 'orizzontale'}, {fps} fps, keepalive {keepalive} ms")
+        log(f"From the tablet: {'portrait' if portrait else 'landscape'}, {fps} fps, keepalive {keepalive} ms")
         a.fps = fps
         a.keepalive = keepalive
         if sender.pipeline:
@@ -337,7 +337,7 @@ def main():
 
     def on_node(node):
         nonlocal usb_started
-        log(f"Monitor virtuale pronto (nodo PipeWire {node})")
+        log(f"Virtual monitor ready (PipeWire node {node})")
         desc = pipeline_desc(a, node)
         sender.pipeline = Gst.parse_launch(desc)
         sender.pipeline.get_by_name("sink").connect("new-sample", sender.on_sample)
@@ -345,7 +345,7 @@ def main():
             Gst.PadProbeType.BUFFER, sender.on_captured)
         bus = sender.pipeline.get_bus()
         bus.add_signal_watch()
-        bus.connect("message::error", lambda b, m: (log("Errore GStreamer:", m.parse_error()[0].message),
+        bus.connect("message::error", lambda b, m: (log("GStreamer error:", m.parse_error()[0].message),
                                                     loop.quit()))
         sender.pipeline.set_state(Gst.State.PLAYING)
         if not a.test and not usb_started:
@@ -353,8 +353,8 @@ def main():
             threading.Thread(target=usb_loop, args=(sender, a), daemon=True).start()
 
     vm = VirtualMonitor(on_node)
-    log(f"Monitor virtuale {a.virtual[0]}x{a.virtual[1]} richiesto a GNOME, stream {a.size[0]}x{a.size[1]}; "
-        "posizionalo in Impostazioni → Schermi")
+    log(f"Virtual monitor {a.virtual[0]}x{a.virtual[1]} requested from GNOME, stream {a.size[0]}x{a.size[1]}; "
+        "position it in Settings > Displays")
     try:
         loop.run()
     except KeyboardInterrupt:
@@ -363,5 +363,5 @@ def main():
         if sender.pipeline:
             sender.pipeline.set_state(Gst.State.NULL)
         vm.stop()
-        os._exit(0)  # i thread USB e GStreamer non devono girare durante lo spegnimento dell'interprete
+        os._exit(0)  # USB and GStreamer threads must not run during interpreter shutdown
 

@@ -1,13 +1,13 @@
 /*
- * notedisplayd - il Galaxy Note 10.1 come schermo USB, sul kernel Samsung 3.0 del GT-N8000.
+ * notedisplayd - the Galaxy Note 10.1 as a USB monitor, on the GT-N8000 Samsung 3.0 kernel.
  *
- * Legge lo stream dell'host (GalaxyNoteDisplay) da /dev/usb_accessory con il protocollo
- * [0xA5][tipo u8][lunghezza u32 big-endian][payload].
- * Ricezione USB -> coda -> decodifica MFC -> ultimo frame -> conversione FIMC e pan su fb0.
- * Solo la visualizzazione salta frame: il decoder deve vederli tutti, perché i frame P
- * dipendono dai precedenti. Il pannello a comparsa sta in panel.c.
+ * Reads the host stream (GalaxyNoteDisplay) from /dev/usb_accessory with the protocol
+ * [0xA5][type u8][length u32 big-endian][payload].
+ * USB receive -> queue -> MFC decode -> latest frame -> FIMC conversion and pan on fb0.
+ * Only the display step may skip frames: the decoder must see all of them, because P frames
+ * depend on the previous ones. The pop-up panel lives in panel.c.
  *
- *   notedisplayd [-n]	 -n: non attende il vsync dopo il pan
+ *   notedisplayd [-n]	 -n: do not wait for vsync after the pan
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -28,12 +28,12 @@
 #define T_CONFIG	0x01
 #define T_FRAME		0x02
 #define T_KEY		0x03
-#define T_INFO		0x04		/* PC -> tablet: encoder, fps, ms di codifica, in testo */
-#define T_SETTINGS	0x13		/* tablet -> PC: verticale u8, fps u8, keepalive ms u16 */
-#define ACC_READ_MAX	16384		/* il driver f_accessory legge al massimo 16 KB per volta */
+#define T_INFO		0x04		/* PC -> tablet: encoder, fps, encode ms, as text */
+#define T_SETTINGS	0x13		/* tablet -> PC: portrait u8, fps u8, keepalive ms u16 */
+#define ACC_READ_MAX	16384		/* the f_accessory driver reads at most 16 KB at a time */
 #define MAX_PAYLOAD	(8 << 20)
-#define QSLOTS		4		/* oltre, la ricezione rallenta l'host invece di accumulare ritardo */
-#define IDLE_MS		500		/* senza frame da tanto, il pannello si disegna da solo */
+#define QSLOTS		4		/* beyond this, receive slows the host instead of building up delay */
+#define IDLE_MS		500		/* with no frames for this long, the panel draws itself */
 
 struct packet {
 	uint8_t type;
@@ -49,10 +49,10 @@ struct stats {
 
 static int display_ok, wait_vsync = 1;
 
-/* Tutto lo stato condiviso fra i thread è protetto da lock */
+/* All state shared between threads is protected by lock */
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t q_cond = PTHREAD_COND_INITIALIZER;	/* coda cambiata */
-static pthread_cond_t show_cond = PTHREAD_COND_INITIALIZER;	/* ultimo frame o conversione cambiati */
+static pthread_cond_t q_cond = PTHREAD_COND_INITIALIZER;	/* queue changed */
+static pthread_cond_t show_cond = PTHREAD_COND_INITIALIZER;	/* latest frame or conversion changed */
 static struct packet queue[QSLOTS];
 static unsigned q_head, q_count;
 static int stopping;
@@ -70,7 +70,7 @@ static double now(void)
 	return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* Buffer di lettura: il driver restituisce fino a 16 KB alla volta, i pacchetti ci stanno a cavallo */
+/* Read buffer: the driver returns up to 16 KB at a time, packets can straddle reads */
 static uint8_t rbuf[ACC_READ_MAX];
 static size_t rlen, rpos;
 
@@ -133,8 +133,8 @@ static int queue_pop(struct packet *p)
 }
 
 /*
- * Il frame in conversione serve da riferimento per il successivo, quindi il decoder può
- * riusare il suo buffer solo da quello dopo: fino ad allora aspetta la FIMC.
+ * The frame being converted is a reference for the next one, so the decoder can reuse its
+ * buffer only from the one after that: until then it waits for the FIMC.
  */
 static void wait_conversion(unsigned int tag)
 {
@@ -144,7 +144,7 @@ static void wait_conversion(unsigned int tag)
 	pthread_mutex_unlock(&lock);
 }
 
-/* Dopo questa nessuno legge più i buffer del decoder, che si può chiudere */
+/* After this nobody reads the decoder buffers, so it can be closed */
 static void drop_frames(void)
 {
 	pthread_mutex_lock(&lock);
@@ -172,14 +172,14 @@ static void *decoder(void *arg)
 
 			printf("config %ux%u, SPS %u byte\n", p.data[0] << 8 | p.data[1],
 			       p.data[2] << 8 | p.data[3], p.data[4] << 8 | p.data[5]);
-			/* SPS e PPS in Annex-B dopo i 6 byte di intestazione */
+			/* Annex-B SPS and PPS after the 6 header bytes */
 			if (n && n <= sizeof(sps_pps)) {
-				/* Stream diverso (per esempio verticale): il decoder va rifatto */
+				/* A different stream (portrait, for example): rebuild the decoder */
 				if (decoding && (n != sps_pps_len || memcmp(sps_pps, p.data + 6, n))) {
 					drop_frames();
 					mfc_close();
 					if (mfc_open() < 0)
-						fprintf(stderr, "mfc: riapertura fallita\n");
+						fprintf(stderr, "mfc: reopen failed\n");
 					decoding = 0;
 				}
 				sps_pps_len = n;
@@ -187,7 +187,7 @@ static void *decoder(void *arg)
 			}
 		} else if (p.type == T_KEY || p.type == T_FRAME) {
 			if (p.type == T_KEY && !decoding && sps_pps_len) {
-				/* l'MFC vuole SPS, PPS e IDR nello stesso buffer per l'inizializzazione */
+				/* the MFC wants SPS, PPS and IDR in the same buffer for initialization */
 				memcpy(init_buf, sps_pps, sps_pps_len);
 				memcpy(init_buf + sps_pps_len, p.data, p.len);
 				if (mfc_init(init_buf, sps_pps_len + p.len, &info) == 0) {
@@ -231,7 +231,7 @@ static void *decoder(void *arg)
 	return NULL;
 }
 
-/* Attivo per tutta la vita del programma: il pannello serve anche senza stream */
+/* Runs for the whole program lifetime: the panel is needed without a stream too */
 static void *presenter(void *arg)
 {
 	(void)arg;
@@ -308,8 +308,8 @@ static void print_stats(double dt)
 	ps.decode_ms = s.decoded ? s.decode * 1e3 / s.decoded : 0;
 	ps.fimc_ms = s.shown ? s.convert * 1e3 / s.shown : 0;
 	panel_set_stats(&ps);
-	printf("%5.1f ricevuti  %5.1f decodificati  %5.1f mostrati  %6.2f Mbit/s  keyframe %u  "
-	       "errori %u  coda %u  decodifica %.2f ms  fimc %.2f ms  pan %.2f ms  vsync %.2f ms\n",
+	printf("%5.1f received  %5.1f decoded  %5.1f shown  %6.2f Mbit/s  keyframes %u  "
+	       "errors %u  queue %u  decode %.2f ms  fimc %.2f ms  pan %.2f ms  vsync %.2f ms\n",
 	       s.received / dt, s.decoded / dt, s.shown / dt, ps.mbit, s.keys, s.errors, s.qmax,
 	       ps.decode_ms, ps.fimc_ms, s.shown ? s.pan * 1e3 / s.shown : 0,
 	       s.shown ? s.vsync * 1e3 / s.shown : 0);
@@ -321,9 +321,9 @@ static void send_settings(int fd, const struct panel_settings *s)
 			    s->keepalive_ms >> 8, s->keepalive_ms & 0xff };
 
 	if (write(fd, pkt, sizeof(pkt)) < 0)
-		perror("invio impostazioni");
+		perror("sending settings");
 	else
-		printf("impostazioni: verticale %d, %d fps, keepalive %d ms\n", s->portrait, s->fps,
+		printf("settings: portrait %d, %d fps, keepalive %d ms\n", s->portrait, s->fps,
 		       s->keepalive_ms);
 }
 
@@ -345,7 +345,7 @@ static void session(int fd)
 		if (read_exact(fd, hdr, 1))
 			break;
 		if (hdr[0] != MAGIC)
-			continue;		/* risincronizzazione dopo una riconnessione */
+			continue;		/* resynchronize after a reconnection */
 		if (read_exact(fd, hdr + 1, 5))
 			break;
 		uint32_t len = (uint32_t)hdr[2] << 24 | hdr[3] << 16 | hdr[4] << 8 | hdr[5];
@@ -378,7 +378,7 @@ static void session(int fd)
 			queue_push(p);
 		}
 
-		/* All'inizio e a ogni cambiamento: il PC segue quello che è stato scelto qui */
+		/* At the start and on every change: the PC follows what was chosen here */
 		struct panel_settings s;
 		unsigned int gen = panel_settings(&s);
 
@@ -422,7 +422,7 @@ int main(int argc, char **argv)
 		panel_start();
 		pthread_create(&show, NULL, presenter, NULL);
 	} else {
-		printf("display non disponibile: solo decodifica\n");
+		printf("display not available: decode only\n");
 	}
 	for (;;) {
 		int fd = open("/dev/usb_accessory", O_RDWR);
@@ -431,10 +431,10 @@ int main(int argc, char **argv)
 			sleep(1);
 			continue;
 		}
-		printf("accessorio aperto, attendo lo stream\n");
+		printf("accessory open, waiting for the stream\n");
 		if (mfc_open() == 0) {
 			session(fd);
-			printf("connessione chiusa\n");
+			printf("connection closed\n");
 		}
 		mfc_close();
 		close(fd);

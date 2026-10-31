@@ -1,10 +1,10 @@
 #!/bin/sh
-# Prepara vendor/ con i file che non stanno nella repo: kernel e ramdisk dal BOOT originale,
-# firmware dell'MFC dal sistema Android. Richiede backup/BOOT.img creato da tools/backup.sh,
-# con Android ancora intatto.
+# Prepares vendor/ with the files that are not in the repository: kernel and ramdisk from the
+# original BOOT, MFC firmware from the Android system. Needs backup/BOOT.img created by
+# tools/backup.sh while Android is still intact.
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."
-[ -f backup/BOOT.img ] || { echo "manca backup/BOOT.img: esegui prima tools/backup.sh"; exit 1; }
+[ -f backup/BOOT.img ] || { echo "backup/BOOT.img is missing: run tools/backup.sh first"; exit 1; }
 python3 tools/unpack-bootimg.py backup/BOOT.img vendor
 adb pull /system/vendor/firmware/mfc_fw.bin vendor/mfc_fw.bin
-echo "Manca solo vendor/busybox: vedi docs/sviluppo.md"
+echo "Only vendor/busybox is left: see docs/development.md"

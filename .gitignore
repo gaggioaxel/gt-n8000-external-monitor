@@ -1,17 +1,17 @@
-# Dati unici del tablet: EFS contiene IMEI e calibrazione radio. Mai in una repo.
+# Data unique to the tablet: EFS holds the IMEI and radio calibration. Never in a repository.
 backup/
 tablet/backup/
 *.img
 *.tar
 *.tar.md5
 
-# File proprietari o di terzi, estratti dal proprio tablet
+# Proprietary or third-party files, extracted from your own tablet
 vendor/
 tablet/vendor/
 *.bin
 *.apk
 
-# Risultati della compilazione
+# Build output
 build/
 tablet/build/
 host/GalaxyNoteDisplay

@@ -1,76 +1,89 @@
 # GT-N8000 External Monitor
 
-Trasforma un Samsung Galaxy Note 10.1 (GT-N8000) del 2012 in un monitor esterno USB per Ubuntu, a 60 fps e senza Android di mezzo.
+Turns a 2012 Samsung Galaxy Note 10.1 (GT-N8000) into a USB external monitor for Ubuntu, at 60 fps and without Android in the way.
 
-Colleghi il cavo e sul PC compare un nuovo monitor. Stacchi il cavo e il monitor sparisce, poi il tablet si spegne da solo.
+Plug in the cable and a new monitor appears on the PC. Unplug it and the monitor goes away, then the tablet powers itself off.
 
 | | |
 | --- | --- |
-| Risoluzione | 1280×800, orizzontale o verticale |
-| Frequenza | 58–60 fps con il movimento |
-| Tempi sul tablet | decodifica 10,5 ms, conversione colore 9 ms |
-| PC | Ubuntu con GNOME su Wayland |
-| Tablet | GT-N8000 con LineageOS/RR 7.1 e root |
+| Resolution | 1280×800, landscape or portrait |
+| Frame rate | 58–60 fps with motion |
+| Time on the tablet | 10.5 ms decode, 9 ms colour conversion |
 
-Il tablet è **solo uno schermo**: tocco e penna non controllano il PC. Sono stati provati e scartati.
+The tablet is **only a screen**: touch and pen do not control the PC. Both were tried and dropped.
 
-## Come funziona
+## Requirements
 
-Il PC crea un monitor virtuale in GNOME, ne codifica lo schermo in H.264 e lo invia via USB. Sul tablet parte un piccolo sistema al posto di Android: lo stesso kernel, ma con un solo programma, `notedisplayd`, che decodifica con l'hardware e scrive direttamente nel framebuffer. Eliminare SurfaceFlinger e Java è ciò che riduce la latenza.
+**Tablet**
+
+- A GT-N8000. Other models are not supported.
+- **Root is mandatory**: partitions are read and written through `su` from Android.
+- An Android 7.1 ROM. Tested with RR, a LineageOS-based ROM.
+- **Tested only with TWRP as recovery.** The menu entry is fixed as `Recovery (TWRP)`: it reboots into whatever is in the RECOVERY partition, but it does not adapt to other recoveries. With a different one the label stays wrong, and that case was never tested. Keep this in mind if you need to restore the tablet.
+
+**PC**
+
+- **Only Ubuntu works out of the box for now.** Tested on one machine with GNOME 46 on Wayland.
+- A udev rule may be needed for USB access and automatic start. `host/install.sh` sets it up; see [Troubleshooting](docs/troubleshooting.md#the-monitor-does-not-appear-on-the-pc) to set it by hand.
+- Other distributions may work if they have GNOME on Wayland, but they were not tested. Xorg is not supported, and neither is Windows.
+
+## How it works
+
+The PC creates a virtual monitor in GNOME, encodes its screen to H.264 and sends it over USB. On the tablet a small system runs in place of Android: the same kernel, but with a single program, `notedisplayd`, which decodes in hardware and writes straight to the framebuffer. Removing SurfaceFlinger and Java is what cuts the latency.
 
 ```mermaid
 flowchart LR
-    subgraph PC["PC Ubuntu"]
-        M[Monitor virtuale<br/>Mutter] --> E[x264 / VA-API]
+    subgraph PC["Ubuntu PC"]
+        M[Virtual monitor<br/>Mutter] --> E[x264 / VA-API]
     end
     subgraph T["Tablet"]
-        D[Decoder MFC] --> F[Conversione FIMC]
+        D[MFC decoder] --> F[FIMC conversion]
         F --> S[fb0]
     end
     E -- "USB, H.264" --> D
-    T -- "impostazioni del pannello" --> PC
+    T -- "panel settings" --> PC
 ```
 
-## Sul tablet
+## On the tablet
 
-All'accensione compare un menu per 5 secondi, che riparte dalla scelta più recente:
+A menu appears for 5 seconds at power-on, starting from the most recent choice:
 
-- **Display esterno**: il monitor USB.
-- **Android**: il sistema originale, senza riavvii aggiuntivi.
+- **External display**: the USB monitor.
+- **Android**: the original system, with no extra reboot.
 - **Recovery (TWRP)**.
 
-Volume sposta la selezione, Accensione conferma, oppure si tocca la voce.
+Volume moves the selection and Power confirms, or you can touch an entry.
 
-Mentre il display è attivo, un tocco ovunque o il tasto Accensione aprono un pannello con batteria, fps e tempi. Dal pannello si regolano luminosità, rotazione, limite di fps e keepalive.
+While the display is running, a touch anywhere or the Power key opens a panel with battery, fps and timings. The panel also sets brightness, rotation, the fps limit and the keepalive.
 
-## Guide
+## Guides
 
-| Guida | Contenuto |
+| Guide | Contents |
 | --- | --- |
-| [Installazione](docs/installazione.md) | backup, costruzione dell'immagine, scrittura, host sul PC |
-| [Uso](docs/uso.md) | menu, pannello, cosa succede collegando e staccando il cavo |
-| [Risoluzione dei problemi](docs/problemi.md) | sintomi comuni e ripristino del tablet |
-| [Architettura](docs/architettura.md) | thread, conversione video, perché certe scelte |
-| [Protocollo USB](docs/protocollo.md) | formato dei pacchetti |
-| [Sviluppo](docs/sviluppo.md) | ciclo di prova, trappole del kernel Samsung |
-| [Storia del progetto](docs/storia.md) | cosa è stato provato, cosa ha funzionato |
+| [Installation](docs/installation.md) | backup, building the image, flashing, PC host |
+| [Usage](docs/usage.md) | menu, panel, what happens when you plug and unplug the cable |
+| [Troubleshooting](docs/troubleshooting.md) | common symptoms and restoring the tablet |
+| [Architecture](docs/architecture.md) | threads, video path, why things are the way they are |
+| [USB protocol](docs/protocol.md) | packet format |
+| [Development](docs/development.md) | test cycle, Samsung kernel pitfalls |
+| [Project history](docs/history.md) | what was tried and what worked |
 
-## Struttura
+## Layout
 
 ```text
-tablet/   sistema sul tablet: notedisplayd, menu di avvio, /init, strumenti di scrittura
-host/     programma per Ubuntu, regola udev, servizio utente
-docs/     guide
+tablet/   system on the tablet: notedisplayd, boot menu, /init, flashing tools
+host/     Ubuntu program, udev rule, user service
+docs/     guides
 ```
 
-## Avvertenze
+## Warnings
 
-Il progetto riscrive la partizione BOOT di un tablet. **Fai prima il backup**: la guida di installazione spiega come. Funziona solo sul GT-N8000 ed è stato provato su un unico esemplare.
+This project rewrites the BOOT partition of a tablet. **Back up first**: the installation guide explains how. It works only on the GT-N8000 and was tested on a single unit.
 
-La repo non contiene il kernel, il ramdisk di Android né il firmware dell'MFC: gli script li estraggono dal tuo tablet.
+The repository does not contain the kernel, the Android ramdisk or the MFC firmware: the scripts extract them from your own tablet.
 
-Il supporto Windows non esiste: richiederebbe un driver per il monitor virtuale e un nuovo programma lato PC.
+Windows support would need a virtual monitor driver and a new PC program.
 
-## Licenza
+## License
 
-GPL-2.0, vedi [LICENSE](LICENSE). Il font viene dal kernel Linux; gli header in `tablet/src/kernel/` sono di Samsung, con doppia licenza GPL-2.0 o Apache-2.0.
+GPL-2.0, see [LICENSE](LICENSE). The font comes from the Linux kernel; the headers in `tablet/src/kernel/` are Samsung's, dual-licensed GPL-2.0 or Apache-2.0.

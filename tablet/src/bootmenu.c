@@ -1,9 +1,9 @@
 /*
- * bootmenu - scelta del sistema all'avvio, stile GRUB, chiamato da /init.
+ * bootmenu - GRUB-style system choice at boot, called by /init.
  *
- * Volume su/giù spostano, Accensione conferma, un tocco su una voce la avvia. Dopo 5
- * secondi senza input parte la voce indicata come argomento, cioè la scelta più recente,
- * oppure il display esterno. Il codice di uscita è la voce scelta.
+ * Volume up/down moves, Power confirms, a touch on an entry starts it. After 5 seconds
+ * without input the entry given as argument starts, that is the most recent choice, or
+ * else the external display. The exit code is the chosen entry.
  */
 #include <fcntl.h>
 #include <poll.h>
@@ -42,13 +42,13 @@
 
 enum { ITEM_DISPLAY, ITEM_ANDROID, ITEM_RECOVERY, ITEMS };
 
-static const char *const labels[ITEMS] = { "Display esterno", "Android", "Recovery (TWRP)" };
+static const char *const labels[ITEMS] = { "External display", "Android", "Recovery (TWRP)" };
 
 static struct fb_var_screeninfo var;
 static struct fb_fix_screeninfo fix;
 static uint8_t *fb;
 
-/* L'immagine sul pannello risulta capovolta rispetto a fb0, come per il video: y e x invertite */
+/* The panel image is upside down relative to fb0, as for the video: x and y are inverted */
 static void put(int x, int y, uint32_t color)
 {
 	int fx = var.xres - 1 - x, fy = var.yres - 1 - y;
@@ -82,7 +82,7 @@ static void draw(int selected, int left)
 {
 	char line[64];
 
-	text(ROW_X, 150, C_TEXT, "Galaxy Note 10.1: scegli il sistema");
+	text(ROW_X, 150, C_TEXT, "Galaxy Note 10.1: choose a system");
 	for (int i = 0; i < ITEMS; i++) {
 		int y = ROW_Y + i * (ROW_H + ROW_GAP);
 
@@ -91,9 +91,9 @@ static void draw(int selected, int left)
 	}
 	fill(ROW_X, 610, ROW_W, FONT_H, C_BG);
 	if (left >= 0)
-		snprintf(line, sizeof(line), "Avvio automatico tra %d s", left);
+		snprintf(line, sizeof(line), "Starting automatically in %d s", left);
 	else
-		snprintf(line, sizeof(line), "Volume per spostarti, Accensione per avviare");
+		snprintf(line, sizeof(line), "Volume to move, Power to start");
 	text(ROW_X, 610, C_DIM, line);
 }
 
@@ -104,7 +104,7 @@ static void wait_ms(int ms)
 	nanosleep(&ts, NULL);
 }
 
-/* Conferma visibile: la voce lampeggia, poi lo schermo si chiude su di lei */
+/* Visible confirmation: the entry flashes, then the screen closes onto it */
 static int leave(int item)
 {
 	int y = ROW_Y + item * (ROW_H + ROW_GAP), h = var.yres, top = 0, bottom = h;
@@ -128,7 +128,7 @@ static int leave(int item)
 		wait_ms(16);
 	}
 	fill(0, y, var.xres, ROW_H, 0xff000000u);
-	text(ROW_X + 32, label_y, C_DIM, "Avvio...");
+	text(ROW_X + 32, label_y, C_DIM, "Starting...");
 	return item;
 }
 
@@ -157,7 +157,7 @@ static double now(void)
 	return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* Voce sotto il tocco, o -1. Il touch è allineato a fb0, l'immagine è capovolta */
+/* Entry under the touch, or -1. The touchscreen is aligned to fb0, the image is upside down */
 static int touched_item(int tx, int ty, int xmax, int ymax)
 {
 	int x = var.xres - 1 - tx * (int)var.xres / (xmax + 1);
@@ -176,7 +176,7 @@ static int touched_item(int tx, int ty, int xmax, int ymax)
 
 int main(int argc, char **argv)
 {
-	/* Il kernel Samsung sceglie la partizione dall'argomento del riavvio: reboot -f torna a BOOT */
+	/* The Samsung kernel picks the partition from the reboot argument: reboot -f returns to BOOT */
 	if (argc > 1 && !strcmp(argv[1], "recovery")) {
 		sync();
 		return syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
@@ -191,7 +191,7 @@ int main(int argc, char **argv)
 	if (argc > 1 && atoi(argv[1]) > ITEM_DISPLAY && atoi(argv[1]) < ITEMS)
 		selected = atoi(argv[1]);
 
-	/* Senza schermo non c'è scelta: Android, che è il comportamento originale */
+	/* Without a screen there is no choice: Android, the original behaviour */
 	if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &var) < 0 ||
 	    ioctl(fd, FBIOGET_FSCREENINFO, &fix) < 0)
 		return ITEM_ANDROID;
@@ -261,7 +261,7 @@ int main(int argc, char **argv)
 			}
 		}
 
-		/* Come in GRUB, qualsiasi tasto ferma il conto alla rovescia */
+		/* As in GRUB, any key stops the countdown */
 		if (!touched) {
 			int l = (int)(deadline - now()) + 1;
 

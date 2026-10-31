@@ -1,6 +1,6 @@
 #!/bin/sh
-# Installa l'host per l'utente corrente: eseguibile, servizio utente e regola udev.
-# La regola udev richiede sudo; il resto no.
+# Installs the host for the current user: executable, user service and udev rule.
+# The udev rule needs sudo; the rest does not.
 set -e
 cd "$(dirname "$(readlink -f "$0")")"
 ./build.sh
@@ -10,4 +10,4 @@ cp galaxynotedisplay.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 sudo cp 70-galaxynotedisplay.rules /etc/udev/rules.d/
 sudo udevadm control --reload
-echo "Installato. Collega il tablet in modalità Display esterno: il monitor compare da solo."
+echo "Installed. Connect the tablet in External display mode: the monitor appears by itself."

@@ -6,21 +6,21 @@ struct panel_stats {
 	int stream_w, stream_h;
 };
 
-/* Impostazioni scelte sul tablet e applicate dal PC */
+/* Settings chosen on the tablet and applied by the PC */
 struct panel_settings {
 	int portrait, fps, keepalive_ms;
 };
 
-/* Avvia il thread di input, che controlla anche il cavo: se si stacca avvisa e spegne il tablet */
+/* Starts the input thread, which also watches the cable: if removed it warns and powers off */
 int panel_start(void);
 int panel_rotation(void);
-/* Copia le impostazioni attuali e restituisce un contatore che cresce a ogni modifica */
+/* Copies the current settings and returns a counter that grows with every change */
 unsigned int panel_settings(struct panel_settings *s);
 void panel_set_stats(const struct panel_stats *s);
 void panel_set_host(const char *encoder, float fps, float encode_ms);
-/* Se il pannello è aperto lo copia nella pagina nascosta, prima del flip */
+/* If the panel is open, copies it to the hidden page before the flip */
 void panel_blit(void);
-/* Senza stream: mostra il pannello nella pagina visibile, o lo cancella quando si chiude */
+/* Without a stream: shows the panel on the visible page, or erases it when it closes */
 void panel_idle(void);
 
 #endif

@@ -1,6 +1,6 @@
 #!/bin/busybox sh
-# Avvio del tablet sul kernel Samsung 3.0 (RR): menu con display esterno, Android o recovery.
-# Il display esterno usa solo busybox e notedisplayd, senza Android.
+# Tablet boot on the Samsung 3.0 (RR) kernel: menu with external display, Android or recovery.
+# The external display uses only busybox and notedisplayd, without Android.
 /bin/busybox --install -s
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t proc proc /proc
@@ -10,9 +10,9 @@ mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
 mdev -s
 mount -t tmpfs tmp /tmp
 
-# Stesso kernel di Android: basta rimettere il suo ramdisk al posto del nostro e avviare il suo
-# init. /etc di Android è un link, quindi prima sposto i nostri file; da lì in poi i link delle
-# applet non valgono più e busybox va chiamato per percorso.
+# Same kernel as Android: it is enough to put its ramdisk in place of ours and start its init.
+# Android's /etc is a link, so our files move away first; from then on the applet links are no
+# longer valid and busybox must be called by path.
 boot_android() {
   /bin/busybox mkdir /.boot
   /bin/busybox mv /bin /sbin /usr /etc /var /lib /root /.boot/
@@ -27,22 +27,22 @@ boot_android() {
   exec /init
 }
 
-# Il bootloader Samsung avvia la recovery finché PARAM[0x700200] vale 4 (REBOOT_MODE_RECOVERY):
-# dalla recovery lo riporto a 0, così il prossimo riavvio torna alla partizione BOOT
+# The Samsung bootloader starts recovery while PARAM[0x700200] is 4 (REBOOT_MODE_RECOVERY):
+# from recovery it goes back to 0, so the next reboot returns to the BOOT partition
 if grep -q bootmode=2 /proc/cmdline; then
   printf '\000' | dd of=/dev/mmcblk0p4 bs=1 seek=$((0x700200)) count=1 conv=notrunc 2>/dev/null
   sync
 fi
 
-# In questa modalità il bootloader si è avviato perché il cavo è stato collegato a tablet spento
+# In this mode the bootloader started because the cable was plugged into a powered-off tablet
 [ "$(cat /sys/class/power_supply/battery/batt_lp_charging 2>/dev/null)" = 1 ] && boot_android
 
-# Scelta più recente del menu: sta nell'ultimo blocco della partizione BOOT, oltre la fine
-# dell'immagine, dove non scrive nessun altro e il bootloader non legge. Se manca è il display
-# esterno. Si scrive solo se cambia. La recovery non si ricorda, altrimenti dopo una visita a
-# TWRP ogni riavvio tornerebbe lì.
+# Most recent menu choice: it lives in the last block of the BOOT partition, past the end of
+# the image, where nothing else writes and the bootloader does not read. If missing, the
+# external display. Written only when it changes. Recovery is not remembered, otherwise after
+# a visit to TWRP every reboot would go back there.
 BOOT=/dev/mmcblk0p5
-LAST_BLOCK=4095		# partizione da 8 MB, blocchi da 2048 byte
+LAST_BLOCK=4095		# 8 MB partition, 2048-byte blocks
 last=0
 [ "$(dd if=$BOOT bs=2048 skip=$LAST_BLOCK count=1 2>/dev/null | head -c 8)" = NDBOOT=1 ] && last=1
 bootmenu $last
@@ -59,29 +59,29 @@ esac
 
 echo /sbin/mdev > /proc/sys/kernel/hotplug
 
-# Firmware dell'MFC: il driver lo chiede durante l'avvio del kernel, prima di noi, quindi
-# mdev non vede l'evento. Lo carico a mano appena compare la richiesta in sysfs.
+# MFC firmware: the driver requests it during kernel boot, before we run, so mdev does not
+# see the event. It is loaded by hand as soon as the request appears in sysfs.
 (
-  # sul kernel 3.0 la cartella porta il nome del dispositivo: il file richiesto sta in uevent
+  # on kernel 3.0 the folder has the device name: the requested file is in uevent
   for i in $(seq 120); do
     for F in /sys/class/firmware/*; do
       [ -e "$F/loading" ] || continue
       N=$(sed -n 's/^FIRMWARE=//p' "$F/uevent")
       [ -f "/lib/firmware/$N" ] || continue
       echo 1 > "$F/loading"; cat "/lib/firmware/$N" > "$F/data"; echo 0 > "$F/loading"
-      echo "firmware $N caricato in $F" >> /tmp/fw.log
+      echo "firmware $N loaded into $F" >> /tmp/fw.log
     done
     [ -s /tmp/fw.log ] && break
     sleep 0.5
   done
 ) &
 
-# Rete di sicurezza: se notedisplayd muore, riavvio normale. Il kernel Samsung segna "avvio
-# normale" e il bootloader torna ad Android invece di rientrare in questa recovery.
+# Safety net: if notedisplayd dies, normal reboot. The Samsung kernel marks a "normal boot"
+# and the bootloader goes back to the BOOT partition.
 (sleep 60; while pidof notedisplayd > /dev/null; do sleep 10; done; reboot -f) &
 
-# USB: accessorio Android già attivo (18d1:2d00, interfaccia 0 = accessorio, come dopo lo
-# switch AOA) più rete RNDIS per telnet. L'host GalaxyNoteDisplay lo trova senza switch.
+# USB: Android accessory already active (18d1:2d00, interface 0 = accessory, as after the AOA
+# switch) plus RNDIS network for telnet. The GalaxyNoteDisplay host finds it without a switch.
 U=/sys/class/android_usb/android0
 echo 0 > $U/enable
 echo 18d1 > $U/idVendor
@@ -104,7 +104,7 @@ touch /var/lib/misc/udhcpd.leases
 udhcpd /etc/udhcpd.conf
 telnetd -l /bin/sh
 
-# Ricezione, decodifica e visualizzazione dello stream; statistiche in /tmp/nd.log (leggibili da telnet)
+# Receive, decode and display the stream; statistics in /tmp/nd.log (readable over telnet)
 notedisplayd > /tmp/nd.log 2>&1 &
 
 while true; do sleep 3600; done

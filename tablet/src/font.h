@@ -1,6 +1,6 @@
 /*
- * Font Terminus 16x32 (codepage 437), dai sorgenti del kernel: lib/fonts/font_ter16x32.c,
- * licenza GPL-2.0. 64 byte per carattere, 2 byte per riga. Generato, non modificare a mano.
+ * Terminus 16x32 font (codepage 437), from the kernel sources: lib/fonts/font_ter16x32.c,
+ * GPL-2.0. 64 bytes per character, 2 bytes per row. Generated, do not edit by hand.
  */
 #ifndef NOTEDISPLAY_FONT_H
 #define NOTEDISPLAY_FONT_H

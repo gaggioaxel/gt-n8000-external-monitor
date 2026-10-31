@@ -1,5 +1,5 @@
-# Costruisce boot.img per il GT-N8000: kernel e ramdisk Android presi dal tablet (vendor/,
-# vedi tools/fetch-vendor.sh), initramfs con il menu di avvio e notedisplayd.
+# Builds boot.img for the GT-N8000: kernel and Android ramdisk taken from the tablet (vendor/,
+# see tools/fetch-vendor.sh), initramfs with the boot menu and notedisplayd.
 CROSS   ?= arm-linux-gnueabihf-
 CC      := $(CROSS)gcc
 STRIP   := $(CROSS)strip
