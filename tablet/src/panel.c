@@ -35,7 +35,7 @@ _Static_assert(sizeof(struct input_event) == 16, "kernel 3.0 input_event");
 #define BAT_PATH	"/sys/class/power_supply/battery/"
 #define USB_ONLINE	"/sys/class/power_supply/usb/online"
 #define AC_ONLINE	"/sys/class/power_supply/ac/online"
-#define OFF_AFTER	10		/* seconds between cable removal and power off */
+#define OFF_AFTER	60		/* seconds between cable removal and power off */
 #define BL_MAX		255
 #define BL_MIN		10		/* never zero: the panel would be needed to turn it back on */
 #define BL_STEP		13		/* 5% for each Volume press */

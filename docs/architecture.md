@@ -49,4 +49,4 @@ The menu choice is in the last block of BOOT, as the text `NDBOOT=0` or `NDBOOT=
 
 ## Safety
 
-If the cable is removed, the tablet powers off after 10 seconds. If the cable state cannot be read the tablet treats it as connected, so a read error does not power it off. A process in `/init` reboots the tablet if `notedisplayd` dies.
+If the cable is removed, the tablet powers off after a minute. If the cable state cannot be read the tablet treats it as connected, so a read error does not power it off. A process in `/init` reboots the tablet if `notedisplayd` dies.

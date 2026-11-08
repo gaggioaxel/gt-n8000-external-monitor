@@ -21,8 +21,8 @@ If you choose Android it stays the default: the monitor will not appear by itsel
 | Situation | What happens |
 | --- | --- |
 | You plug in the cable with the display running | the monitor appears on the PC |
-| You unplug the cable | the monitor goes away, the tablet shows a warning and powers off after 10 seconds |
-| You plug it back within 10 seconds | the warning goes away and the monitor returns |
+| You unplug the cable | the monitor goes away, the tablet shows a warning and powers off after a minute |
+| You plug it back within a minute | the warning goes away and the monitor returns |
 | You power on without a cable | the display starts after the menu, then the warning and power off |
 
 The screen stays black until the PC sends the first frame.
